@@ -65,4 +65,25 @@ class ChzzkUrlTest {
         assertEquals("1.5 MB/s", formatSpeed((1.5 * 1024 * 1024).toLong()))
         assertEquals(null, formatSpeed(0))
     }
+
+    @Test
+    fun sanitizesXmlWithUnescapedAmpersands() {
+        val input = """
+            <MPD>
+                <BaseURL>https://example.com/vod?token=xyz&expire=123&sign=abc</BaseURL>
+                <Title>Q&A with Devs & Gamers</Title>
+                <AlreadyEscaped>&amp; &lt; &gt; &quot; &apos; &#123; &#x2F;</AlreadyEscaped>
+            </MPD>
+        """.trimIndent()
+
+        val expected = """
+            <MPD>
+                <BaseURL>https://example.com/vod?token=xyz&amp;expire=123&amp;sign=abc</BaseURL>
+                <Title>Q&amp;A with Devs &amp; Gamers</Title>
+                <AlreadyEscaped>&amp; &lt; &gt; &quot; &apos; &#123; &#x2F;</AlreadyEscaped>
+            </MPD>
+        """.trimIndent()
+
+        assertEquals(expected, DashParser.sanitizeXml(input))
+    }
 }
