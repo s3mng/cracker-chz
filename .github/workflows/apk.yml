@@ -3,7 +3,6 @@ name: Build APK
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -14,12 +13,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Push main and its version tag together. A tag-only push can be released
+      # with workflow_dispatch on that tag (without rebuilding main as well).
+      - name: Detect release tag
+        id: release
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts)
+          TAG="v${VERSION}"
+          if [[ "$(git rev-parse --verify "refs/tags/${TAG}^{commit}" 2>/dev/null || true)" == "$(git rev-parse HEAD)" ]]; then
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 25
-          cache: gradle
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
 
       - uses: android-actions/setup-android@v4
 
@@ -37,23 +54,28 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --build-cache --no-daemon --stacktrace
 
       - name: Stage APK
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           mkdir -p dist
-          VERSION="${GITHUB_REF_NAME//\//-}"
+          VERSION="${RELEASE_TAG:-${GITHUB_REF_NAME//\//-}}"
           cp app/build/outputs/apk/release/app-release.apk "dist/cracker-${VERSION}-${GITHUB_RUN_NUMBER}.apk"
 
       - uses: actions/upload-artifact@v6
+        if: steps.release.outputs.tag == ''
         with:
           name: cracker-apk
           path: dist/*.apk
           if-no-files-found: error
+          retention-days: 7
 
       - name: GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.release.outputs.tag != ''
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
           files: dist/*.apk
           generate_release_notes: true
