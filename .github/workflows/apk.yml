@@ -46,7 +46,7 @@ jobs:
         run: |
           echo "$SIGNING_KEY_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/upload-keystore.jks"
 
-      - name: Build release APK
+      - name: Test and build release APK
         env:
           SIGNING_STORE_FILE: ${{ github.workspace }}/upload-keystore.jks
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -54,7 +54,7 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --build-cache --no-daemon --stacktrace
+          ./gradlew testDebugUnitTest assembleRelease --build-cache --no-daemon --stacktrace
 
       - name: Stage APK
         env:
