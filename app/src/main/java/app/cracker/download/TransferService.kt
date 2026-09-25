@@ -57,6 +57,7 @@ class TransferService : Service() {
                     }
                 } else {
                     val text = when {
+                        active.processingLabel != null -> active.processingLabel
                         active.kind.isLive -> listOfNotNull(active.elapsedLabel ?: "녹화 중", active.speedLabel).joinToString(" · ")
                         active.status == JobStatus.Paused -> "일시정지"
                         else -> listOfNotNull("${(active.progress * 100).toInt()}%", active.speedLabel).joinToString(" · ")
@@ -69,7 +70,7 @@ class TransferService : Service() {
                             text,
                             active.id,
                             active.kind.isLive,
-                            (active.progress * 100).toInt(),
+                            if (active.processingLabel == null) (active.progress * 100).toInt() else null,
                         ),
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
                     )
@@ -132,7 +133,7 @@ class TransferService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         if (progress != null && !live) {
             builder.setProgress(100, progress.coerceIn(0, 100), false)
-        } else if (live) {
+        } else {
             builder.setProgress(0, 0, true)
         }
         if (jobId != null) {

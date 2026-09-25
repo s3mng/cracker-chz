@@ -132,6 +132,7 @@ class TransferCoordinator(
 
     fun togglePause(id: String) {
         val job = _jobs.value.firstOrNull { it.id == id } ?: return
+        if (job.processingLabel != null) return
         if (job.kind.isLive) return
         when (job.status) {
             JobStatus.Running -> {
@@ -216,6 +217,7 @@ class TransferCoordinator(
                 progress = 0f,
                 attempt = 1,
                 maxAttempts = maxAttempts,
+                processingLabel = null,
                 error = null,
             ),
         )
@@ -233,6 +235,8 @@ class TransferCoordinator(
                             status = JobStatus.Running,
                             progress = 0f,
                             attempt = attempt,
+                            processingLabel = null,
+                            speedLabel = null,
                             maxAttempts = maxAttempts,
                             error = null,
                         ),
@@ -278,12 +282,13 @@ class TransferCoordinator(
                                     current.copy(
                                         progress = value,
                                         status = if (paused) JobStatus.Paused else JobStatus.Running,
-                                        speedLabel = if (paused) null else formatSpeed(sampler.sample(bytes)),
+                                        speedLabel = if (paused || current.processingLabel != null) null else formatSpeed(sampler.sample(bytes)),
                                     ),
                                 )
                             },
                             isPaused = { pause[id]?.get() == true },
                             isCancelled = { cancelled(id) },
+                            onProcessing = { markProcessing(id, "MP4 정리 중") },
                         )
                     }
                     ticker?.cancel()
@@ -297,6 +302,7 @@ class TransferCoordinator(
                     if (cancelled(id)) {
                         if (live && staging.file.exists() && staging.file.length() > 0) {
                             publishing = true
+                            markProcessing(id, "저장 중")
                             check(staging.publish(request.title, mime(extension), locationStore.uri.value, checkSavingActive)) {
                                 "파일 저장에 실패했어요"
                             }
@@ -314,6 +320,7 @@ class TransferCoordinator(
                         return
                     }
                     publishing = true
+                    markProcessing(id, "저장 중")
                     check(staging.publish(request.title, mime(extension), locationStore.uri.value, checkSavingActive)) {
                         "파일 저장에 실패했어요"
                     }
@@ -354,6 +361,13 @@ class TransferCoordinator(
 
     private fun currentJob(id: String, fallback: DownloadJob): DownloadJob =
         _jobs.value.firstOrNull { it.id == id } ?: fallback
+
+    private fun markProcessing(id: String, label: String) {
+        val current = _jobs.value.firstOrNull { it.id == id } ?: return
+        if (cancelled(id)) return
+        pause[id]?.set(false)
+        upsert(current.copy(processingLabel = label, speedLabel = null, status = JobStatus.Running))
+    }
 
     private fun markCancelled(id: String, fallback: DownloadJob, live: Boolean) {
         upsert(

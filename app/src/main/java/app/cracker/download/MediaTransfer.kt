@@ -24,10 +24,11 @@ class MediaTransfer(
         onProgress: (progress: Float, bytes: Long) -> Unit,
         isPaused: () -> Boolean,
         isCancelled: () -> Boolean,
+        onProcessing: () -> Unit,
     ) {
         when (quality.protocol) {
             StreamProtocol.Hls -> downloadHls(quality.mediaUrl, output.outputStream(), onProgress, isPaused, isCancelled)
-            StreamProtocol.Dash -> downloadDash(quality, output, onProgress, isPaused, isCancelled)
+            StreamProtocol.Dash -> downloadDash(quality, output, onProgress, isPaused, isCancelled, onProcessing)
         }
     }
 
@@ -110,6 +111,7 @@ class MediaTransfer(
         onProgress: (progress: Float, bytes: Long) -> Unit,
         isPaused: () -> Boolean,
         isCancelled: () -> Boolean,
+        onProcessing: () -> Unit,
     ) {
         val reps = DashParser.parse(
             http.getText(quality.mediaUrl, DASH_XML_ACCEPT),
@@ -151,6 +153,10 @@ class MediaTransfer(
                 }
             }
             val transferContext = coroutineContext
+            waitIfPaused(isPaused, isCancelled)
+            transferContext.ensureActive()
+            if (isCancelled()) return
+            onProcessing()
             Mp4Muxer.mux(videoFile, if (audio != null) audioFile else null, output) {
                 transferContext.ensureActive()
                 if (isCancelled()) throw CancellationException("다운로드 취소")

@@ -101,7 +101,7 @@ fun JobCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    listOfNotNull(job.channel, job.elapsedLabel, statusCaption(job)).joinToString("  ·  "),
+                    listOfNotNull(job.channel, job.elapsedLabel).joinToString("  ·  "),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -110,18 +110,36 @@ fun JobCard(
             }
             JobActions(job, onCancel, onTogglePause)
         }
+        statusCaption(job)?.let { caption ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = caption,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                softWrap = true,
+            )
+        }
         if (!job.kind.isLive && job.status != JobStatus.Completed && job.status != JobStatus.Failed && job.status != JobStatus.Cancelled) {
             Spacer(Modifier.height(14.dp))
-            LinearProgressIndicator(
-                progress = { job.progress.coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(50)),
-                color = Cheddar,
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                drawStopIndicator = {},
-            )
+            if (job.processingLabel != null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
+                    color = Cheddar,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                )
+            } else {
+                LinearProgressIndicator(
+                    progress = { job.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(50)),
+                    color = Cheddar,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    drawStopIndicator = {},
+                )
+            }
         }
         if (job.kind.isLive && job.status == JobStatus.Running) {
             Spacer(Modifier.height(14.dp))
@@ -137,7 +155,7 @@ private fun JobActions(
     onTogglePause: () -> Unit,
 ) {
     Row {
-        if (!job.kind.isLive && job.status in listOf(JobStatus.Running, JobStatus.Paused)) {
+        if (!job.kind.isLive && job.processingLabel == null && job.status in listOf(JobStatus.Running, JobStatus.Paused)) {
             IconButton(onClick = onTogglePause) {
                 Icon(
                     if (job.status == JobStatus.Paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
@@ -241,6 +259,7 @@ private fun LivePulseBar() {
 
 private fun statusCaption(job: DownloadJob): String? = when (job.status) {
     JobStatus.Running -> when {
+        job.processingLabel != null -> job.processingLabel
         job.kind.isLive -> listOfNotNull("녹화 중", job.speedLabel).joinToString(" · ")
         job.attempt > 1 -> listOfNotNull(
             "${(job.progress * 100).toInt()}%",

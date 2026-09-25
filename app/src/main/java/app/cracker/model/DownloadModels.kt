@@ -38,6 +38,7 @@ data class DownloadJob(
     val progress: Float = 0f,
     val elapsedLabel: String? = null,
     val speedLabel: String? = null,
+    val processingLabel: String? = null,
     val isAdult: Boolean = false,
     val error: String? = null,
     val attempt: Int = 1,
