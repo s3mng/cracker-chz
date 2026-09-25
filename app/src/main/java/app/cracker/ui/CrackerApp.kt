@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -25,6 +26,9 @@ fun CrackerApp(
     val navController = rememberNavController()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    LaunchedEffect(state.shareRevision) {
+        if (state.shareRevision > 0) navController.popBackStack("home", inclusive = false)
+    }
     val app = context.applicationContext as CrackerApplication
     val folderUri by app.graph.downloadLocation.uri.collectAsStateWithLifecycle()
     val vodRetries by app.graph.transferSettings.vodRetries.collectAsStateWithLifecycle()

@@ -10,6 +10,7 @@ import app.cracker.net.getText
 import java.io.File
 import java.io.OutputStream
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import okhttp3.OkHttpClient
 import kotlin.coroutines.coroutineContext
@@ -116,6 +117,7 @@ class MediaTransfer(
         )
         val video = reps.first { it.id == quality.dashVideoRepId }
         val audio = reps.firstOrNull { it.id == quality.dashAudioRepId }
+        check(quality.dashAudioRepId == null || audio != null) { "선택한 음성 트랙을 찾지 못했어요" }
         val videoFile = File(output.parentFile, "${output.nameWithoutExtension}.video.m4s")
         val audioFile = File(output.parentFile, "${output.nameWithoutExtension}.audio.m4s")
         val urls = video.segmentUrls + (audio?.segmentUrls ?: emptyList())
@@ -148,10 +150,10 @@ class MediaTransfer(
                     }
                 }
             }
-            runCatching {
-                Mp4Muxer.mux(videoFile, audio.takeIf { audioFile.exists() }?.let { audioFile }, output)
-            }.onFailure {
-                videoFile.copyTo(output, overwrite = true)
+            val transferContext = coroutineContext
+            Mp4Muxer.mux(videoFile, if (audio != null) audioFile else null, output) {
+                transferContext.ensureActive()
+                if (isCancelled()) throw CancellationException("다운로드 취소")
             }
             onProgress(1f, bytes)
         } finally {

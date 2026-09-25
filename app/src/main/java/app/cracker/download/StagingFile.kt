@@ -9,6 +9,7 @@ import androidx.documentfile.provider.DocumentFile
 import app.cracker.chzzk.sanitizeFileName
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 
 class StagingFile(
     private val context: Context,
@@ -25,27 +26,33 @@ class StagingFile(
 
     fun outputStream(): FileOutputStream = FileOutputStream(file, true)
 
-    fun publish(title: String, mime: String, treeUri: Uri?): Boolean {
+    fun publish(title: String, mime: String, treeUri: Uri?, checkActive: () -> Unit = {}): Boolean {
+        checkActive()
         val name = "${sanitizeFileName(title)}.${file.extension}"
-        if (treeUri != null && publishToTree(treeUri, name, mime)) {
+        if (treeUri != null && publishToTree(treeUri, name, mime, checkActive)) {
             file.delete()
             return true
         }
-        return publishToMovies(name, mime)
+        return publishToMovies(name, mime, checkActive)
     }
 
-    private fun publishToTree(treeUri: Uri, name: String, mime: String): Boolean {
+    private fun publishToTree(treeUri: Uri, name: String, mime: String, checkActive: () -> Unit): Boolean {
         val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return false
         if (!tree.canWrite()) return false
         tree.findFile(name)?.delete()
         val created = tree.createFile(mime, name) ?: return false
-        context.contentResolver.openOutputStream(created.uri)?.use { dest ->
-            file.inputStream().use { it.copyTo(dest) }
-        } ?: return false
-        return true
+        try {
+            val dest = context.contentResolver.openOutputStream(created.uri)
+                ?: error("저장 파일을 열지 못했어요")
+            dest.use { copyTo(it, checkActive) }
+            return true
+        } catch (error: Exception) {
+            runCatching { created.delete() }
+            throw error
+        }
     }
 
-    private fun publishToMovies(name: String, mime: String): Boolean {
+    private fun publishToMovies(name: String, mime: String, checkActive: () -> Unit): Boolean {
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
             put(MediaStore.Video.Media.MIME_TYPE, mime)
@@ -54,20 +61,40 @@ class StagingFile(
         }
         val uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
             ?: return false
-        context.contentResolver.openOutputStream(uri)?.use { dest ->
-            file.inputStream().use { it.copyTo(dest) }
-        } ?: return false
-        values.clear()
-        values.put(MediaStore.Video.Media.IS_PENDING, 0)
-        context.contentResolver.update(uri, values, null, null)
-        file.delete()
-        return true
+        try {
+            val dest = context.contentResolver.openOutputStream(uri)
+                ?: error("저장 파일을 열지 못했어요")
+            dest.use { copyTo(it, checkActive) }
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            check(context.contentResolver.update(uri, values, null, null) > 0) {
+                "저장을 완료하지 못했어요"
+            }
+            file.delete()
+            return true
+        } catch (error: Exception) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            throw error
+        }
     }
 
     fun delete() {
         file.delete()
         File(file.parent, "${file.nameWithoutExtension}.video.m4s").delete()
         File(file.parent, "${file.nameWithoutExtension}.audio.m4s").delete()
+    }
+
+    private fun copyTo(destination: OutputStream, checkActive: () -> Unit) {
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                checkActive()
+                val size = input.read(buffer)
+                if (size < 0) break
+                destination.write(buffer, 0, size)
+            }
+        }
+        checkActive()
     }
 
     companion object {

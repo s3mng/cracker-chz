@@ -8,6 +8,7 @@ import app.cracker.model.DownloadJob
 import app.cracker.model.ExtractResult
 import app.cracker.model.VideoMeta
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,11 +26,20 @@ data class HomeUiState(
     val pendingMeta: VideoMeta? = null,
     val selectedQualityId: String? = null,
     val snackbar: String? = null,
+    val shareRevision: Long = 0,
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CrackerApplication).graph
     private val local = MutableStateFlow(HomeUiState())
+    private var resolveJob: Job? = null
+
+    fun receiveShare(text: String) {
+        resolveJob?.cancel()
+        local.update { it.copy(url = text.trim(), pendingMeta = null, selectedQualityId = null,
+            shareRevision = it.shareRevision + 1) }
+        submitUrl()
+    }
 
     val state: StateFlow<HomeUiState> = combine(
         local,
@@ -50,7 +60,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun submitUrl() {
         val raw = local.value.url.trim()
         if (raw.isEmpty()) return
-        viewModelScope.launch {
+        resolveJob?.cancel()
+        resolveJob = viewModelScope.launch {
             local.update { it.copy(isResolving = true, snackbar = null) }
             val result = withContext(Dispatchers.IO) { graph.extractor.resolve(raw) }
             local.update { current ->
@@ -115,7 +126,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onNotificationDenied() {
-        local.update { it.copy(snackbar = "알림을 허용해야 백그라운드에서 받을 수 있어요") }
+        local.update { it.copy(snackbar = "알림 없이 다운로드를 시작해요. 진행 상황은 앱에서 확인할 수 있어요") }
     }
 
     fun logout() {

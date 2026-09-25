@@ -22,6 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,9 +39,11 @@ data class TransferRequest(
     val title: String,
 )
 
+private class SaveFailure(cause: Exception) : Exception("파일 저장에 실패했어요. 저장 공간과 폴더 권한을 확인해 주세요", cause)
+
 class TransferCoordinator(
     private val context: Context,
-    http: OkHttpClient,
+    private val http: OkHttpClient,
     private val locationStore: DownloadLocationStore,
     private val settings: TransferSettings,
 ) {
@@ -55,6 +59,22 @@ class TransferCoordinator(
     private val _jobs = MutableStateFlow(restore(history.load()))
     val jobs: StateFlow<List<DownloadJob>> = _jobs.asStateFlow()
     private var loop: Job? = null
+    private var timedOut = false
+
+    fun stopForTimeout() {
+        timedOut = true
+        _jobs.value.filter { it.status in listOf(JobStatus.Queued, JobStatus.Running, JobStatus.Paused) }
+            .forEach { job ->
+                cancel[job.id]?.set(true)
+                pause[job.id]?.set(false)
+                upsert(job.copy(status = JobStatus.Failed, speedLabel = null,
+                    error = "백그라운드 실행 시간이 초과되어 중단됐어요"))
+            }
+        loop?.cancel()
+        http.dispatcher.cancelAll()
+        queue.clear()
+        StagingFile.sweep(context)
+    }
 
     init {
         history.save(_jobs.value)
@@ -129,6 +149,7 @@ class TransferCoordinator(
 
     fun startLoop() {
         if (loop?.isActive == true) return
+        timedOut = false
         loop = scope.launch {
             mutex.withLock {
                 while (true) {
@@ -147,8 +168,9 @@ class TransferCoordinator(
                     }
                     runCatching { process(next.id) }
                         .onFailure { error ->
+                            if (error is CancellationException) throw error
                             val current = _jobs.value.firstOrNull { it.id == next.id } ?: next
-                            if (cancel[next.id]?.get() == true) {
+                            if (cancel[next.id]?.get() == true && error !is SaveFailure) {
                                 upsert(
                                     current.copy(
                                         status = if (current.kind == JobKind.Live) JobStatus.Stopped else JobStatus.Cancelled,
@@ -236,6 +258,7 @@ class TransferCoordinator(
                 } else {
                     null
                 }
+                var publishing = false
                 try {
                     if (live) {
                         transfer.recordLive(
@@ -264,10 +287,19 @@ class TransferCoordinator(
                         )
                     }
                     ticker?.cancel()
+                    coroutineContext.ensureActive()
+                    val transferContext = coroutineContext
+                    val checkSavingActive = {
+                        transferContext.ensureActive()
+                        if (!live && cancelled(id)) throw CancellationException("다운로드 취소")
+                    }
                     val current = currentJob(id, request.job)
                     if (cancelled(id)) {
                         if (live && staging.file.exists() && staging.file.length() > 0) {
-                            staging.publish(request.title, mime(extension), locationStore.uri.value)
+                            publishing = true
+                            check(staging.publish(request.title, mime(extension), locationStore.uri.value, checkSavingActive)) {
+                                "파일 저장에 실패했어요"
+                            }
                             val stopped = current.copy(
                                 status = JobStatus.Stopped,
                                 elapsedLabel = formatClock(System.currentTimeMillis() - startedAt),
@@ -281,7 +313,10 @@ class TransferCoordinator(
                         }
                         return
                     }
-                    staging.publish(request.title, mime(extension), locationStore.uri.value)
+                    publishing = true
+                    check(staging.publish(request.title, mime(extension), locationStore.uri.value, checkSavingActive)) {
+                        "파일 저장에 실패했어요"
+                    }
                     val finished = currentJob(id, request.job).copy(
                         status = JobStatus.Completed,
                         progress = 1f,
@@ -293,7 +328,12 @@ class TransferCoordinator(
                     return
                 } catch (error: Exception) {
                     staging.delete()
-                    if (error is CancellationException) throw error
+                    if (error is CancellationException) {
+                        coroutineContext.ensureActive()
+                        markCancelled(id, request.job, live)
+                        return
+                    }
+                    if (publishing) throw SaveFailure(error)
                     if (cancelled(id)) {
                         markCancelled(id, request.job, live)
                         return
@@ -302,6 +342,7 @@ class TransferCoordinator(
                     if (attempt == maxAttempts) throw error
                 } finally {
                     ticker?.cancel()
+                    staging.delete()
                 }
             }
             throw lastError ?: IllegalStateException("실패")
@@ -355,6 +396,7 @@ class TransferCoordinator(
 
     private fun upsert(job: DownloadJob) {
         if (job.id in discarded) return
+        if (timedOut && job.status != JobStatus.Failed) return
         val previous = _jobs.value.firstOrNull { it.id == job.id }
         _jobs.update { list ->
             val without = list.filterNot { it.id == job.id }

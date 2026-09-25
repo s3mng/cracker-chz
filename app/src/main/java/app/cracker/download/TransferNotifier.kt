@@ -1,6 +1,9 @@
 package app.cracker.download
 
 import android.app.NotificationChannel
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -14,6 +17,8 @@ class TransferNotifier(context: Context) {
     private val app = context.applicationContext
 
     fun notifyFinished(job: DownloadJob) {
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED) return
         val manager = app.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "완료", NotificationManager.IMPORTANCE_DEFAULT),

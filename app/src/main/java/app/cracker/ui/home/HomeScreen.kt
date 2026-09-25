@@ -64,13 +64,16 @@ fun HomeScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val permissionPrefs = remember(context) {
+        context.getSharedPreferences("notification_permission", android.content.Context.MODE_PRIVATE)
+    }
     var jobToDelete by remember { mutableStateOf<DownloadJob?>(null) }
     var confirmClearAll by remember { mutableStateOf(false) }
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) viewModel.confirmPending()
-        else viewModel.onNotificationDenied()
+        viewModel.confirmPending()
+        if (!granted) viewModel.onNotificationDenied()
     }
 
     LaunchedEffect(state.snackbar) {
@@ -182,8 +185,12 @@ fun HomeScreen(
                     context,
                     Manifest.permission.POST_NOTIFICATIONS,
                 ) == PackageManager.PERMISSION_GRANTED
-                if (granted) viewModel.confirmPending()
-                else notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                if (granted || permissionPrefs.getBoolean("requested", false)) {
+                    viewModel.confirmPending()
+                } else {
+                    permissionPrefs.edit().putBoolean("requested", true).apply()
+                    notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
             },
             onDismiss = viewModel::dismissSheet,
             onLogin = onLogin,

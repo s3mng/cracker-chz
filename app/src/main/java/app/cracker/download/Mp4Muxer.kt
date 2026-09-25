@@ -7,27 +7,47 @@ import java.io.File
 import java.nio.ByteBuffer
 
 object Mp4Muxer {
-    fun mux(video: File, audio: File?, output: File) {
-        val muxer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val videoExtractor = MediaExtractor().apply { setDataSource(video.absolutePath) }
-        val videoTrack = selectTrack(videoExtractor, "video/")
-        val videoIndex = muxer.addTrack(videoExtractor.getTrackFormat(videoTrack))
+    fun mux(video: File, audio: File?, output: File, checkActive: () -> Unit = {}) {
+        var muxer: MediaMuxer? = null
+        val videoExtractor = MediaExtractor()
         var audioExtractor: MediaExtractor? = null
-        var audioIndex = -1
-        if (audio != null && audio.length() > 0) {
-            audioExtractor = MediaExtractor().apply { setDataSource(audio.absolutePath) }
-            val audioTrack = selectTrack(audioExtractor, "audio/")
-            audioIndex = muxer.addTrack(audioExtractor.getTrackFormat(audioTrack))
+        var completed = false
+        try {
+            checkActive()
+            videoExtractor.setDataSource(video.absolutePath)
+            val writer = MediaMuxer(output.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = writer
+            val videoTrack = selectTrack(videoExtractor, "video/")
+            val videoTracks = linkedMapOf(videoTrack to writer.addTrack(videoExtractor.getTrackFormat(videoTrack)))
+            var separateAudioTracks: Map<Int, Int> = emptyMap()
+            if (audio != null) {
+                check(audio.length() > 0) { "음성 파일이 비어 있어요" }
+                val extractor = MediaExtractor()
+                audioExtractor = extractor
+                extractor.setDataSource(audio.absolutePath)
+                val track = selectTrack(extractor, "audio/")
+                separateAudioTracks = mapOf(track to writer.addTrack(extractor.getTrackFormat(track)))
+            } else {
+                // Some DASH representations contain both video and audio.
+                for (track in 0 until videoExtractor.trackCount) {
+                    val format = videoExtractor.getTrackFormat(track)
+                    if (format.getString("mime").orEmpty().startsWith("audio/")) {
+                        videoTracks[track] = writer.addTrack(format)
+                    }
+                }
+            }
+            writer.start()
+            copyTracks(videoExtractor, videoTracks, writer, checkActive)
+            audioExtractor?.let { copyTracks(it, separateAudioTracks, writer, checkActive) }
+            checkActive()
+            writer.stop()
+            completed = true
+        } finally {
+            runCatching { muxer?.release() }
+            runCatching { videoExtractor.release() }
+            runCatching { audioExtractor?.release() }
+            if (!completed) output.delete()
         }
-        muxer.start()
-        copyTrack(videoExtractor, videoTrack, muxer, videoIndex)
-        if (audioExtractor != null) {
-            copyTrack(audioExtractor, selectTrack(audioExtractor, "audio/"), muxer, audioIndex)
-        }
-        muxer.stop()
-        muxer.release()
-        videoExtractor.release()
-        audioExtractor?.release()
     }
 
     private fun selectTrack(extractor: MediaExtractor, prefix: String): Int {
@@ -38,25 +58,33 @@ object Mp4Muxer {
         error("트랙을 찾지 못했어요")
     }
 
-    private fun copyTrack(
+    private fun copyTracks(
         extractor: MediaExtractor,
-        track: Int,
+        tracks: Map<Int, Int>,
         muxer: MediaMuxer,
-        muxerTrack: Int,
+        checkActive: () -> Unit,
     ) {
-        extractor.selectTrack(track)
-        val buffer = ByteBuffer.allocate(1024 * 1024)
+        tracks.keys.forEach(extractor::selectTrack)
+        var buffer = ByteBuffer.allocate(1024 * 1024)
         val info = MediaCodec.BufferInfo()
         while (true) {
+            checkActive()
+            val track = extractor.sampleTrackIndex
+            if (track < 0) break
+            val sampleSize = extractor.sampleSize
+            check(sampleSize <= Int.MAX_VALUE) { "영상 프레임이 너무 커요" }
+            if (sampleSize > buffer.capacity()) buffer = ByteBuffer.allocate(sampleSize.toInt())
+            buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
             if (size < 0) break
             info.offset = 0
             info.size = size
             info.presentationTimeUs = extractor.sampleTime.coerceAtLeast(0)
-            info.flags = extractor.sampleFlags
-            muxer.writeSampleData(muxerTrack, buffer, info)
+            info.flags = if (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+                MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+            muxer.writeSampleData(tracks.getValue(track), buffer, info)
             extractor.advance()
         }
-        extractor.unselectTrack(track)
+        tracks.keys.forEach(extractor::unselectTrack)
     }
 }
