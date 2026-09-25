@@ -15,14 +15,9 @@ data class DashRepresentation(
 )
 
 object DashParser {
-    private val UNESCAPED_AMPERSAND = Regex("&(?!(?:amp|lt|gt|quot|apos|#\\d+|#[xX][0-9a-fA-F]+);)")
-
-    fun sanitizeXml(xml: String): String =
-        xml.replace(UNESCAPED_AMPERSAND, "&amp;")
-
     fun parse(xml: String, mpdUrl: String): List<DashRepresentation> {
         val parser = Xml.newPullParser()
-        parser.setInput(sanitizeXml(xml).reader())
+        parser.setInput(xml.reader())
         val root = mpdUrl.toHttpUrl()
         var event = parser.eventType
         var mpdDuration = 0.0

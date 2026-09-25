@@ -31,8 +31,8 @@ android {
         applicationId = "app.cracker"
         minSdk = 35
         targetSdk = 37
-        versionCode = 8
-        versionName = "2.1.1"
+        versionCode = 9
+        versionName = "2.1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

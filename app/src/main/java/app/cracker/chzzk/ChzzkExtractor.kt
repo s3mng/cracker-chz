@@ -5,6 +5,7 @@ import app.cracker.model.JobKind
 import app.cracker.model.QualityOption
 import app.cracker.model.StreamProtocol
 import app.cracker.model.VideoMeta
+import app.cracker.net.DASH_XML_ACCEPT
 import app.cracker.net.getText
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -180,7 +181,7 @@ class ChzzkExtractor(private val http: OkHttpClient) {
     }
 
     private fun dashQualities(mpdUrl: String): List<QualityOption> {
-        val xml = http.getText(mpdUrl)
+        val xml = http.getText(mpdUrl, DASH_XML_ACCEPT)
         val reps = DashParser.parse(xml, mpdUrl)
         val videos = reps.filter { it.contentType == "video" }.sortedByDescending { it.height ?: 0 }
         val audioId = reps.filter { it.contentType == "audio" }.maxByOrNull { it.bandwidth }?.id

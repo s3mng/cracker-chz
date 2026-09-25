@@ -4,6 +4,7 @@ import app.cracker.chzzk.DashParser
 import app.cracker.chzzk.HlsParser
 import app.cracker.model.QualityOption
 import app.cracker.model.StreamProtocol
+import app.cracker.net.DASH_XML_ACCEPT
 import app.cracker.net.download
 import app.cracker.net.getText
 import java.io.File
@@ -109,7 +110,10 @@ class MediaTransfer(
         isPaused: () -> Boolean,
         isCancelled: () -> Boolean,
     ) {
-        val reps = DashParser.parse(http.getText(quality.mediaUrl), quality.mediaUrl)
+        val reps = DashParser.parse(
+            http.getText(quality.mediaUrl, DASH_XML_ACCEPT),
+            quality.mediaUrl,
+        )
         val video = reps.first { it.id == quality.dashVideoRepId }
         val audio = reps.firstOrNull { it.id == quality.dashAudioRepId }
         val videoFile = File(output.parentFile, "${output.nameWithoutExtension}.video.m4s")
