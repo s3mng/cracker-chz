@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apk:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
